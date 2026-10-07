@@ -1,0 +1,32 @@
+---
+title: "Visualizations_DS-403"
+author: "Tallen Vidal"
+format: html
+editor: visual
+---
+
+## Visualization Document
+
+Working document for all of the visualizations used for the DS-403 (Digital Humanities) project. Parsing in text data, for analysis of thematic patterns throughout the various translations of Homer's *The Odyssey*.
+
+## Working Through Code
+
+Loading Libraries and figuring out how to parse text data in Rstudio.
+
+```{r}
+library(tidyverse)
+library(bayesrules)
+library(janitor)
+library(e1071)
+library(tidytext)
+library(ggplot2)
+```
+
+You can add options to executable code like this
+
+```{r}
+#| echo: false
+2 * 2
+```
+
+The `echo: false` option disables the printing of code (only output is displayed).
