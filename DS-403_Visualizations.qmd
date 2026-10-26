@@ -9,6 +9,10 @@ editor: visual
 
 Working document for all of the visualizations used for the DS-403 (Digital Humanities) project. Parsing in text data, for analysis of thematic patterns throughout the various translations of Homer's *The Odyssey*.
 
+## Research Question:
+
+How do the vocabulary choices throughout the three different translations of Homer's *The Odyssey* influence the narrative being communicated; and does it capture the core themes of the original story?
+
 ## Working Through Code
 
 Loading Libraries and figuring out how to parse text data in Rstudio.
@@ -21,6 +25,8 @@ library(e1071)
 library(tidytext)
 library(ggplot2)
 ```
+
+## Visualization Section:
 
 ```{r}
 #| echo: false
