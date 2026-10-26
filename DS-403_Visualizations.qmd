@@ -22,8 +22,6 @@ library(tidytext)
 library(ggplot2)
 ```
 
-You can add options to executable code like this
-
 ```{r}
 #| echo: false
 2 * 2
