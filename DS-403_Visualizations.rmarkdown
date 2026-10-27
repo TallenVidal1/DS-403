@@ -1,0 +1,45 @@
+---
+title: "Visualizations_DS-403"
+author: "Tallen Vidal"
+format: html
+editor: visual
+---
+
+## Visualization Document
+
+Working document for all of the visualizations used for the DS-403 (Digital Humanities) project. Parsing in text data, for analysis of thematic patterns throughout the various translations of Homer's *The Odyssey*.
+
+## Research Question:
+
+How do the vocabulary choices throughout the three different translations of Homer's *The Odyssey* influence the narrative being communicated; and does it capture the core themes of the original story?
+
+## Hypothesis:
+
+I predict that the text data from the different translations will reveal some of the core themes from *The Odyssey* through the vocabulary that is used within each translation. However, how much overlap between the translations is a different story. If i were to draw preliminary conclusions, I would guess that the first two translations of *The Odyssey* that were published chronologically (so in this case Fagles, and Fitzgerald) will have more in common than the most recent translation (Wilson). I predict this because the newer translation was created with the goal of appealing to the modern generation of readers. Another thing is that I think the core themes of the original Odyssey story will be more in tact in older versions because the translators/authors were not working to push specific agendas. Wilson's translation was the backbone of the script for the Christopher Nolan's *The Odyssey* (2026) and the movie alone took many creative liberties with the character interpretations. That being said, if the Wilson translation is anything like the film in terms of what narrative it conveys and how it depicts the characters, I think the vocabulary words that are parsed by the text-mining will reveal a lack of overlap between some core themes compared to the other two (older) translations.
+
+## Progress:
+
+Currently I have no visualizations but I have solidified my sources, uploaded them to this repository and also installed all of the text mining packages provided by Dr. Chong.
+
+## Working Through Code
+
+Loading Libraries and figuring out how to parse text data in Rstudio.
+
+```{r}
+library(tidyverse)
+library(bayesrules)
+library(janitor)
+library(e1071)
+library(tidytext)
+library(ggplot2)
+```
+
+## Visualization Section:
+
+```{r}
+#| echo: false
+2 * 2
+```
+
+The `echo: false` option disables the printing of code (only output is displayed).
+
