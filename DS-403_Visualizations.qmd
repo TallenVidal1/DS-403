@@ -32,13 +32,30 @@ library(janitor)
 library(e1071)
 library(tidytext)
 library(ggplot2)
+
+library(pdftools)
+library(tidytext)
+library(wordcloud)
+library(scales)
+library(widyr)
+library(ggrepel)
+```
+
+## Setup:
+
+```{r}
+## Organizing data ##
+pdf_files <- c(
+  Fitzgerald = "path/to/fitzgerald_odyssey.pdf",
+  Fagles     = "path/to/fagles_odyssey.pdf",
+  Wilson     = "path/to/wilson_odyssey.pdf"
+)
 ```
 
 ## Visualization Section:
 
 ```{r}
-#| echo: false
-2 * 2
+
 ```
 
 The `echo: false` option disables the printing of code (only output is displayed).
