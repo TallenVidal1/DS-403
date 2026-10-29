@@ -312,6 +312,33 @@ characters <- c(
 )
 ```
 
+```{r}
+# (4) Unusually long lines are usually leftover prose (notes, summaries, intro)
+odyssey_lines |>
+  filter(nchar(text) > 75) |>
+  select(translator, book, page, text) |>
+  print(n = 40)
+```
+
+```{r}
+# (6) Leftover ALL-CAPS lines (wrapped heading text, stray headers, etc.)
+odyssey_lines |>
+  filter(str_detect(text, "^[A-Z0-9 ,.'-]{6,}$")) |>
+  select(translator, book, page, text) |>
+  print(n = 30)
+```
+
+```{r}
+# (7) Fitzgerald only: last page that still has the "HOMER" running header.
+#     Use this (or a page just after it) as the `end` in page_ranges so the
+#     Aesop material that follows is not read in as part of Book 24.
+raw_lines |>
+  filter(translator == "Fitzgerald") |>
+  mutate(t = str_squish(text)) |>
+  filter(str_detect(t, "^H ?OMER /")) |>
+  summarise(last_homer_page = max(page))
+```
+
 ## Visualization Section:
 
 ```{r}
