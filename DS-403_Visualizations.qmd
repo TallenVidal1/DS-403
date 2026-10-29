@@ -46,10 +46,25 @@ library(ggrepel)
 ```{r}
 ## Organizing data ##
 pdf_files <- c(
-  Fitzgerald = "path/to/fitzgerald_odyssey.pdf",
-  Fagles     = "path/to/fagles_odyssey.pdf",
-  Wilson     = "path/to/wilson_odyssey.pdf"
+  Fitzgerald = "DS-403/fitzgerald_odyssey.pdf",
+  Fagles     = "DS-403/fagles_odyssey.pdf",
+  Wilson     = "DS-403/wilson_odyssey.pdf"
 )
+```
+
+```{r}
+# Page ranges of the actual poem (skip introductions, maps, glossaries,
+# notes, etc.). Open each PDF and find the first and last pages of Book 1
+# and Book 24. Use NA to keep from the start / to the end.
+page_ranges <- list(
+  Fitzgerald = c(start = 1, end = 322),
+  Fagles     = c(start = NA, end = NA),
+  Wilson     = c(start = 101, end = 497)
+)
+```
+
+```{r}
+page_ranges |> filter(translator == "Fagles") |> slice(c(1:3, (n()-2):n()))
 ```
 
 ## Visualization Section:
