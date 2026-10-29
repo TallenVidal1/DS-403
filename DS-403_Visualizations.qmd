@@ -46,9 +46,9 @@ library(ggrepel)
 ```{r}
 ## Organizing data ##
 pdf_files <- c(
-  Fitzgerald = "DS-403/fitzgerald_odyssey.pdf",
-  Fagles     = "DS-403/fagles_odyssey.pdf",
-  Wilson     = "DS-403/wilson_odyssey.pdf"
+  Fitzgerald = "fitzgerald_odyssey.pdf",
+  Fagles     = "fagles_odyssey.pdf",
+  Wilson     = "wilson_odyssey.pdf"
 )
 ```
 
@@ -58,13 +58,258 @@ pdf_files <- c(
 # and Book 24. Use NA to keep from the start / to the end.
 page_ranges <- list(
   Fitzgerald = c(start = 1, end = 322),
-  Fagles     = c(start = NA, end = NA),
+  Fagles     = c(start = 2, end = NA),
   Wilson     = c(start = 101, end = 497)
 )
 ```
 
+## Assigning the start and end for when to parse text data
+
 ```{r}
-page_ranges |> filter(translator == "Fagles") |> slice(c(1:3, (n()-2):n()))
+check_ranges <- function(pdf_files, page_ranges, n_chars = 300) {
+  for (name in names(pdf_files)) {
+    pages <- pdf_text(pdf_files[[name]])
+    s <- page_ranges[[name]][["start"]]
+    e <- page_ranges[[name]][["end"]]
+    if (is.na(s)) s <- 1
+    if (is.na(e)) e <- length(pages)
+    
+    cat("\n=====", name, "| total pages in PDF:", length(pages),
+        "| range:", s, "-", e, "=====\n")
+    cat("--- START (page", s, ") ---\n")
+    cat(substr(str_squish(pages[s]), 1, n_chars), "\n")
+    cat("--- END (page", e, ") -
+        --\n")
+    last <- str_squish(pages[e])
+    cat(substr(last, max(1, nchar(last) - n_chars), nchar(last)), "\n")
+  }
+}
+
+check_ranges(pdf_files, page_ranges)
+```
+
+```{r}
+read_translation <- function(path, translator, start = NA, end = NA) {
+  pages <- pdf_text(path)
+  n <- length(pages)
+  s <- ifelse(is.na(start), 1, start)
+  e <- ifelse(is.na(end), n, end)
+  pages <- pages[s:e]
+  
+  # One row per line of text
+  tibble(translator = translator,
+         page = seq(s, e),
+         text = pages) |>
+    mutate(text = str_split(text, "\n")) |>
+    unnest(text)
+}
+
+raw_lines <- imap_dfr(pdf_files, function(path, name) {
+  read_translation(path, name,
+                   start = page_ranges[[name]][["start"]],
+                   end   = page_ranges[[name]][["end"]])
+})
+```
+
+```{r}
+raw_lines |> group_by(translator) |>
+  summarise(lines = n(), characters = sum(nchar(text)))
+```
+
+## Prepping the data for Cleaning after reading it in
+
+```{r}
+raw_lines |> filter(translator == "Fagles") |> slice(1:60) |> pull(text)
+```
+
+```{r}
+raw_lines |> filter(translator == "Fitzgerald") |> slice(1:60) |> pull(text)
+```
+
+```{r}
+raw_lines |> filter(translator == "Wilson") |> slice(1:60) |> pull(text)
+```
+
+## Checking to make sure every pdf is a FULL translation
+
+```{r}
+raw_lines |>
+  filter(translator == "Fitzgerald") |>
+  mutate(t = str_squish(text)) |>
+  filter(str_detect(t, "^BOOK\\s")) |>
+  distinct(page, t) |>
+  print(n = 40)
+```
+
+## Huge Clean Sesh from Claude (Ayo?)
+
+```{r}
+# =============================================================================
+# UPDATE 1 of 3: REPLACE the entire old "Section 3. Clean the text" with this
+# (everything from "# ---- 3. Clean the text" down to and including the old
+#  odyssey_full <- ... block). Run it right after Section 2 (raw_lines).
+# =============================================================================
+
+# ---- 3. Clean the text (tailored to the Fitzgerald, Fagles, Wilson PDFs) ----
+
+# A "Book" heading: "BOOK ONE: A GODDESS INTERVENES" (Fitzgerald),
+# "Book I" (Fagles), "BOOK 1" (Wilson). Case-sensitive on purpose so a verse
+# line that happens to start with "book" is not mistaken for a heading.
+# Fitzgerald's PDF splits letters ("BOOK T WENT Y-ONE", "BOOK SEV EN"), so the
+# number part allows any capitals, digits, spaces and hyphens before the colon.
+book_heading_rx <- "^(BOOK|Book)\\s+[A-Z0-9 -]+(:.*)?$"
+
+# Running headers / front-matter lines to delete, per translation.
+# Add patterns here if you spot more leftovers (see the checks below).
+header_rx <- list(
+  Fitzgerald = c("^[0-9]+_[0-9]+-[0-9]+_",   # production line: "05_273-611_Homer 2/Aesop ... Page 273"
+                 "^H ?OMER\\s*/",            # running header: "H OMER / The Odyssey, Book One 273"
+                 "^THE ODYSSEY$",
+                 "^Translated by"),
+  Fagles     = character(0),
+  Wilson     = character(0)
+)
+
+clean_translation <- function(df, tr) {
+  
+  # Step A: squish whitespace, drop bare page numbers and running headers
+  d <- df |>
+    mutate(text = str_squish(text)) |>
+    filter(!str_detect(text, "^[0-9]+$"))
+  
+  if (length(header_rx[[tr]]) > 0) {
+    d <- d |> filter(!str_detect(text, paste(header_rx[[tr]], collapse = "|")))
+  }
+  
+  # Step B: group consecutive non-blank lines into blocks (a paragraph,
+  # stanza, heading, footnote...). Blank lines separate blocks.
+  d <- d |>
+    mutate(is_blank   = text == "",
+           block      = cumsum(is_blank != lag(is_blank, default = TRUE)),
+           is_heading = str_detect(text, book_heading_rx)) |>
+    group_by(block) |>
+    mutate(block_first       = first(text),
+           block_has_headnote = any(str_detect(text, "Editors.{0,3}headnote"))) |>
+    ungroup()
+  
+  # Blocks that sit right after a heading and are the book's subtitle
+  # (Fagles: "Athena Inspires / the Prince"; Wilson: "The Boy and the Goddess").
+  # Non-blank blocks alternate with blank ones, so the subtitle is heading + 2.
+  heading_blocks <- unique(d$block[d$is_heading])
+  
+  d <- d |>
+    mutate(
+      book = cumsum(is_heading),    # 0 = anything before Book 1 (intro, etc.)
+      drop_block =
+        block %in% heading_blocks |                                       # whole heading block, incl. wrapped title lines
+        block_has_headnote |                                              # editors' headnotes (Fitzgerald)
+        (tr == "Fitzgerald" & str_detect(block_first, "^[0-9]{1,3} \\S")) |  # footnote paragraphs
+        (tr %in% c("Fagles", "Wilson") & block %in% (heading_blocks + 2))    # book subtitles
+    ) |>
+    filter(book > 0, !drop_block, !is_heading, !is_blank)
+  
+  # Step C: tidy the remaining verse lines
+  d |>
+    mutate(text = str_replace_all(text, "[\u2018\u2019]", "'"),     # curly -> straight quotes
+           text = str_replace_all(text, "[\u201C\u201D]", "\""),
+           text = str_replace_all(text, "[\u2013\u2014]", " "),     # dashes -> space (avoids glued words)
+           text = str_remove(text, "\\s+[0-9]{1,4}$"),              # line numbers / footnote markers at end
+           text = str_remove(text, "^[0-9]{1,4}\\s+"),              # numbers at start
+           text = stringi::stri_trans_general(text, "Latin-ASCII"), # Telemakhos accents -> plain letters
+           text = str_squish(text)) |>
+    filter(text != "") |>
+    select(translator, book, page, text)
+}
+
+odyssey_lines <- raw_lines |>
+  group_split(translator) |>
+  map_dfr(~ clean_translation(.x, unique(.x$translator)))
+
+# Full text per translator (used for sentence and bigram tokenizing)
+odyssey_full <- odyssey_lines |>
+  group_by(translator) |>
+  summarise(text = paste(text, collapse = " "), .groups = "drop")
+
+# ---- 3b. Checks: run these and look before moving on ------------------------
+
+# (1) How many book headings were detected in the raw text? Expect 24 for a
+#     full translation. Fewer means an excerpted edition or a heading pattern
+#     that did not match.
+raw_lines |>
+  mutate(t = str_squish(text)) |>
+  filter(str_detect(t, book_heading_rx)) |>
+  count(translator, name = "headings_found")
+
+# (2) Size of the cleaned text per translator
+odyssey_lines |>
+  group_by(translator) |>
+  summarise(books = n_distinct(book),
+            lines = n(),
+            words = sum(str_count(text, "\\S+")))
+
+# (3) First lines of Book 1 should be the opening of the poem
+odyssey_lines |> filter(book == 1) |> group_by(translator) |> slice(1:4) |> print(n = Inf)
+
+# (4) Unusually long lines are usually leftover prose (notes, summaries, intro)
+odyssey_lines |>
+  filter(nchar(text) > 75) |>
+  select(translator, book, page, text) |>
+  print(n = 40)
+
+# (5) Broken ligatures from PDF extraction (e.g. "f light" for "flight")
+odyssey_lines |>
+  filter(str_detect(text, "\\bf [a-z]")) |>
+  select(translator, page, text) |>
+  print(n = 20)
+
+# (6) Leftover ALL-CAPS lines (wrapped heading text, stray headers, etc.)
+odyssey_lines |>
+  filter(str_detect(text, "^[A-Z0-9 ,.'-]{6,}$")) |>
+  select(translator, book, page, text) |>
+  print(n = 30)
+
+# (7) Fitzgerald only: last page that still has the "HOMER" running header.
+#     Use this (or a page just after it) as the `end` in page_ranges so the
+#     Aesop material that follows is not read in as part of Book 24.
+raw_lines |>
+  filter(translator == "Fitzgerald") |>
+  mutate(t = str_squish(text)) |>
+  filter(str_detect(t, "^H ?OMER /")) |>
+  summarise(last_homer_page = max(page))
+
+
+# =============================================================================
+# UPDATE 2 of 3: In Section 4, REPLACE the first mutate() line inside
+# tidy_words (the one with str_remove_all("^'+|'+$")) with this. It also
+# strips possessives, so "Zeus's" and "Zeus'" both count as "zeus".
+# =============================================================================
+#   mutate(word = str_remove(word, "'s$"),
+#          word = str_remove_all(word, "^'+|'+$")) |>
+
+
+# =============================================================================
+# UPDATE 3 of 3: In Section 15, REPLACE the `characters` vector with this.
+# Accents are already stripped, so Fitzgerald's Telemakhos / Kirke / Kalypso /
+# Eumaios etc. are matched alongside the Latinized spellings.
+# =============================================================================
+characters <- c(
+  Odysseus   = "^(odysseus|ulysses)$",
+  Telemachus = "^(telemachus|telemakhos)$",
+  Penelope   = "^penelope$",
+  Athena     = "^(athena|athene|pallas)$",
+  Zeus       = "^(zeus|jove)$",
+  Poseidon   = "^poseidon$",
+  Circe      = "^(circe|kirke)$",
+  Calypso    = "^(calypso|kalypso)$",
+  Polyphemus = "^(polyphemus|polyphemos|cyclops|kyklops|kyklopes)$",
+  Eumaeus    = "^(eumaeus|eumaios)$",
+  Antinous   = "^(antinous|antinoos)$",
+  Eurycleia  = "^(eurycleia|euryclea|eurykleia)$",
+  Nestor     = "^nestor$",
+  Menelaus   = "^(menelaus|menelaos)$",
+  Helen      = "^helen$",
+  Suitors    = "^suitors$"
+)
 ```
 
 ## Visualization Section:
