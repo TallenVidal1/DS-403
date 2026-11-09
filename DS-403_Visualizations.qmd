@@ -385,7 +385,211 @@ ggplot(word_totals, aes(translator, total_words, fill = translator)) +
 ## More Plots:
 
 ```{r}
+# ---- 6. Plot 2: Vocabulary richness ----------------------------------------
+vocab <- tidy_words |>
+  group_by(translator) |>
+  summarise(tokens = n(),
+            types = n_distinct(word),
+            ttr = types / tokens, .groups = "drop")
+vocab
 
+ggplot(vocab, aes(translator, types, fill = translator)) +
+  geom_col(width = 0.6, show.legend = FALSE) +
+  geom_text(aes(label = comma(types)), vjust = -0.4) +
+  scale_fill_manual(values = translator_colors) +
+  scale_y_continuous(labels = comma, expand = expansion(mult = c(0, 0.1))) +
+  labs(title = "Unique Vocabulary Size (Distinct Words)",
+       x = NULL, y = "Distinct words")
+
+# Vocabulary growth curves (distinct words seen vs. words read)
+vocab_growth <- tidy_words |>
+  group_by(translator) |>
+  mutate(new_word = !duplicated(word),
+         types_so_far = cumsum(new_word)) |>
+  ungroup()
+
+ggplot(vocab_growth, aes(word_index, types_so_far, color = translator)) +
+  geom_line(linewidth = 1) +
+  scale_color_manual(values = translator_colors) +
+  scale_x_continuous(labels = comma) +
+  scale_y_continuous(labels = comma) +
+  labs(title = "Vocabulary Growth Curve",
+       subtitle = "How quickly each translation introduces new words",
+       x = "Words read", y = "Distinct words so far", color = NULL)
+```
+
+```{r}
+# ---- 7. Plot 3: Word length distribution -----------------------------------
+ggplot(tidy_words, aes(nchar(word), fill = translator)) +
+  geom_histogram(binwidth = 1, color = "white", show.legend = FALSE) +
+  facet_wrap(~ translator, ncol = 1, scales = "free_y") +
+  scale_fill_manual(values = translator_colors) +
+  coord_cartesian(xlim = c(0, 15)) +
+  labs(title = "Distribution of Word Lengths",
+       x = "Characters per word", y = "Count")
+
+# Average word length (and violin comparison)
+ggplot(tidy_words, aes(translator, nchar(word), fill = translator)) +
+  geom_violin(show.legend = FALSE, alpha = 0.7) +
+  stat_summary(fun = mean, geom = "point", size = 3) +
+  scale_fill_manual(values = translator_colors) +
+  labs(title = "Word Length by Translation (dot = mean)",
+       x = NULL, y = "Characters per word")
+```
+
+```{r}
+# ---- 8. Plot 4: Line and sentence length -----------------------------------
+# Line length (verse structure: Fitzgerald/Fagles/Wilson all differ)
+line_stats <- odyssey_lines |>
+  mutate(words_in_line = str_count(text, "\\S+"))
+
+ggplot(line_stats, aes(words_in_line, fill = translator)) +
+  geom_histogram(binwidth = 1, color = "white", show.legend = FALSE) +
+  facet_wrap(~ translator, ncol = 1, scales = "free_y") +
+  scale_fill_manual(values = translator_colors) +
+  labs(title = "Words per Line of Verse",
+       x = "Words in line", y = "Number of lines")
+
+# Sentence length
+sentences <- odyssey_full |>
+  unnest_tokens(sentence, text, token = "sentences") |>
+  mutate(words_in_sentence = str_count(sentence, "\\S+"))
+
+ggplot(sentences, aes(translator, words_in_sentence, fill = translator)) +
+  geom_boxplot(show.legend = FALSE, outlier.alpha = 0.3) +
+  scale_fill_manual(values = translator_colors) +
+  coord_cartesian(ylim = c(0, 80)) +
+  labs(title = "Sentence Length by Translation",
+       x = NULL, y = "Words per sentence")
+
+sentences |> group_by(translator) |>
+  summarise(mean_len = mean(words_in_sentence),
+            median_len = median(words_in_sentence))
+```
+
+```{r}
+# ---- 9. Plot 5: Most frequent content words --------------------------------
+top_words <- content_words |>
+  count(translator, word, sort = TRUE) |>
+  group_by(translator) |>
+  slice_max(n, n = 15, with_ties = FALSE) |>
+  ungroup()
+
+ggplot(top_words, aes(reorder_within(word, n, translator), n, fill = translator)) +
+  geom_col(show.legend = FALSE) +
+  scale_x_reordered() +
+  scale_fill_manual(values = translator_colors) +
+  coord_flip() +
+  facet_wrap(~ translator, scales = "free_y") +
+  labs(title = "Top 15 Content Words per Translation (stop words removed)",
+       x = NULL, y = "Frequency")
+```
+
+```{r}
+# ---- 10. Plot 6: Word clouds -----------------------------------------------
+par(mfrow = c(1, 3), mar = c(0, 0, 2, 0))
+for (tr in names(pdf_files)) {
+  wc <- content_words |> filter(translator == tr) |> count(word)
+  wordcloud(wc$word, wc$n, max.words = 80, random.order = FALSE,
+            colors = translator_colors[tr], scale = c(3, 0.5))
+  title(tr)
+}
+par(mfrow = c(1, 1))
+```
+
+```{r}
+# ---- 11. Plot 7: Distinctive words (TF-IDF) --------------------------------
+tfidf <- content_words |>
+  count(translator, word) |>
+  bind_tf_idf(word, translator, n) |>
+  group_by(translator) |>
+  slice_max(tf_idf, n = 12, with_ties = FALSE) |>
+  ungroup()
+
+ggplot(tfidf, aes(reorder_within(word, tf_idf, translator), tf_idf, fill = translator)) +
+  geom_col(show.legend = FALSE) +
+  scale_x_reordered() +
+  scale_fill_manual(values = translator_colors) +
+  coord_flip() +
+  facet_wrap(~ translator, scales = "free") +
+  labs(title = "Most Distinctive Words per Translation (TF-IDF)",
+       subtitle = "Words heavily used in one translation but rare in the others",
+       x = NULL, y = "TF-IDF")
+```
+
+```{r}
+# ---- 12. Plot 8: Word-frequency comparison between translations ------------
+# Relative frequency of each word, compared across translators.
+freq_wide <- tidy_words |>
+  anti_join(stop_words, by = "word") |>
+  count(translator, word) |>
+  group_by(translator) |>
+  mutate(prop = n / sum(n)) |>
+  ungroup() |>
+  select(-n) |>
+  pivot_wider(names_from = translator, values_from = prop, values_fill = 0)
+
+plot_freq_pair <- function(df, x, y) {
+  ggplot(df, aes(.data[[x]], .data[[y]])) +
+    geom_abline(color = "gray50", lty = 2) +
+    geom_point(alpha = 0.4, color = "steelblue") +
+    geom_text_repel(data = df |> filter(.data[[x]] > 0.002 | .data[[y]] > 0.002),
+                    aes(label = word), size = 3, max.overlaps = 15) +
+    scale_x_log10(labels = percent_format(accuracy = 0.01)) +
+    scale_y_log10(labels = percent_format(accuracy = 0.01)) +
+    labs(title = paste(x, "vs.", y, "word frequencies"),
+         subtitle = "Words near the dashed line are used equally often",
+         x = x, y = y)
+}
+
+freq_pos <- freq_wide |> filter(Fitzgerald > 0, Fagles > 0, Wilson > 0)
+plot_freq_pair(freq_pos, "Fitzgerald", "Fagles")
+plot_freq_pair(freq_pos, "Fitzgerald", "Wilson")
+plot_freq_pair(freq_pos, "Fagles", "Wilson")
+
+# Correlation of word usage between translations
+freq_pos |> select(-word) |> cor(method = "spearman") |> round(3)
+```
+
+```{r}
+# ---- 13. Plot 9: Zipf's law ------------------------------------------------
+zipf <- tidy_words |>
+  count(translator, word, sort = TRUE) |>
+  group_by(translator) |>
+  mutate(rank = row_number(), freq = n / sum(n)) |>
+  ungroup()
+
+ggplot(zipf, aes(rank, freq, color = translator)) +
+  geom_line(linewidth = 1) +
+  scale_x_log10() + scale_y_log10() +
+  scale_color_manual(values = translator_colors) +
+  labs(title = "Zipf's Law: Rank vs. Frequency (log-log)",
+       x = "Rank", y = "Term frequency", color = NULL)
+```
+
+```{r}
+#---- 14. Plot 10: Bigrams --------------------------------------------------
+  bigrams <- odyssey_full |>
+    unnest_tokens(bigram, text, token = "ngrams", n = 2) |>
+    separate(bigram, c("w1", "w2"), sep = " ") |>
+    filter(!is.na(w1), !is.na(w2),
+           !w1 %in% stop_words$word, !w2 %in% stop_words$word) |>
+    unite(bigram, w1, w2, sep = " ")
+  
+  top_bigrams <- bigrams |>
+    count(translator, bigram, sort = TRUE) |>
+    group_by(translator) |>
+    slice_max(n, n = 12, with_ties = FALSE) |>
+    ungroup()
+  
+  ggplot(top_bigrams, aes(reorder_within(bigram, n, translator), n, fill = translator)) +
+    geom_col(show.legend = FALSE) +
+    scale_x_reordered() +
+    scale_fill_manual(values = translator_colors) +
+    coord_flip() +
+    facet_wrap(~ translator, scales = "free_y") +
+    labs(title = "Most Common Bigrams (stop words removed)",
+         x = NULL, y = "Frequency")
 ```
 
 ```{r}
