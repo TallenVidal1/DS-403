@@ -593,5 +593,463 @@ ggplot(zipf, aes(rank, freq, color = translator)) +
 ```
 
 ```{r}
+# ---- 15. Plot 11: Character and god mentions -------------------------------
+# Spelling varies by translator, so use regex patterns. Extend as you like.
+characters <- c(
+  Odysseus    = "^(odysseus|ulysses)$",
+  Telemachus  = "^telemachus$",
+  Penelope    = "^penelope$",
+  Athena      = "^(athena|athene|pallas)$",
+  Zeus        = "^(zeus|jove)$",
+  Poseidon    = "^poseidon$",
+  Circe       = "^circe$",
+  Calypso     = "^calypso$",
+  Polyphemus  = "^(polyphemus|cyclops)$",
+  Eumaeus     = "^eumaeus$",
+  Antinous    = "^antinous$",
+  Eurycleia   = "^(eurycleia|eurykleia)$",
+  Nestor      = "^nestor$",
+  Menelaus    = "^menelaus$",
+  Helen       = "^helen$",
+  Suitors     = "^suitors$"
+)
 
+char_counts <- imap_dfr(characters, function(pattern, name) {
+  tidy_words |>
+    filter(str_detect(word, pattern)) |>
+    mutate(character = name)
+})
+
+# Mentions per 10,000 words (so translations of different lengths compare fairly)
+char_rates <- char_counts |>
+  count(translator, character) |>
+  left_join(word_totals, by = "translator") |>
+  mutate(per_10k = n / total_words * 10000)
+
+ggplot(char_rates, aes(reorder(character, per_10k), per_10k, fill = translator)) +
+  geom_col(position = "dodge") +
+  scale_fill_manual(values = translator_colors) +
+  coord_flip() +
+  labs(title = "Character & Deity Mentions per 10,000 Words",
+       x = NULL, y = "Mentions per 10k words", fill = NULL)
+
+# Dispersion plot: where do characters appear across the epic?
+main_chars <- c("Odysseus", "Telemachus", "Penelope", "Athena", "Poseidon", "Circe")
+
+ggplot(char_counts |> filter(character %in% main_chars),
+       aes(position, character, color = translator)) +
+  geom_point(shape = "|", size = 4, alpha = 0.6, show.legend = FALSE) +
+  scale_color_manual(values = translator_colors) +
+  scale_x_continuous(labels = percent) +
+  facet_wrap(~ translator, ncol = 1) +
+  labs(title = "Where Characters Appear Across the Poem",
+       x = "Position in text", y = NULL)
+```
+
+```{r}
+# ---- 16. Plot 12: Sentiment arc --------------------------------------------
+# Uses the Bing lexicon (built into tidytext, no download needed).
+# Note: lexicons are built on modern English, so treat results as exploratory.
+sentiment_arc <- tidy_words |>
+  inner_join(get_sentiments("bing"), by = "word") |>
+  mutate(chunk = ceiling(position * 50)) |>                 # 50 slices of the poem
+  count(translator, chunk, sentiment) |>
+  pivot_wider(names_from = sentiment, values_from = n, values_fill = 0) |>
+  mutate(net_sentiment = positive - negative)
+
+ggplot(sentiment_arc, aes(chunk, net_sentiment, fill = net_sentiment > 0)) +
+  geom_col(show.legend = FALSE) +
+  scale_fill_manual(values = c("TRUE" = "#2c7fb8", "FALSE" = "#d7301f")) +
+  facet_wrap(~ translator, ncol = 1) +
+  labs(title = "Sentiment Arc Across the Odyssey (Bing lexicon)",
+       subtitle = "Net positive minus negative words in each 2% slice of the text",
+       x = "Position in poem (slice of 50)", y = "Net sentiment")
+
+# Overall sentiment composition
+tidy_words |>
+  inner_join(get_sentiments("bing"), by = "word") |>
+  count(translator, sentiment) |>
+  group_by(translator) |>
+  mutate(share = n / sum(n)) |>
+  ggplot(aes(translator, share, fill = sentiment)) +
+  geom_col() +
+  scale_y_continuous(labels = percent) +
+  scale_fill_manual(values = c(negative = "#d7301f", positive = "#2c7fb8")) +
+  labs(title = "Share of Positive vs. Negative Words",
+       x = NULL, y = NULL, fill = NULL)
+
+# Top contributing sentiment words
+tidy_words |>
+  inner_join(get_sentiments("bing"), by = "word") |>
+  count(translator, word, sentiment) |>
+  group_by(translator, sentiment) |>
+  slice_max(n, n = 8, with_ties = FALSE) |>
+  ungroup() |>
+  ggplot(aes(reorder_within(word, n, paste(translator, sentiment)), n, fill = sentiment)) +
+  geom_col(show.legend = FALSE) +
+  scale_x_reordered() +
+  scale_fill_manual(values = c(negative = "#d7301f", positive = "#2c7fb8")) +
+  coord_flip() +
+  facet_wrap(translator ~ sentiment, scales = "free_y", ncol = 2) +
+  labs(title = "Words Driving Sentiment Scores", x = NULL, y = "Count")
+```
+
+## Big Radial Tree Diagram
+
+```{r}
+# =============================================================================
+# Radial Tree: How Each Translation Describes ODYSSEUS
+#
+# Tree structure (center -> edge):
+#   Odysseus -> TRAIT -> TRANSLATION -> ADJECTIVE (leaf)
+#
+# Leaf size   = how often the adjective describes Odysseus
+# Leaf colour = translation
+# Leaf shape / bold label = adjective appears in 1, 2, or all 3 translations
+# Grey arcs   = the SAME adjective used in different translations (similarities)
+#
+# Requires: odyssey_lines from the main script (Sections 0-3, using the UPDATED
+# Section 3 so that it has a `book` column). Run those first.
+# =============================================================================
+
+# install.packages(c("udpipe", "ggraph", "igraph", "tidygraph"))   # once
+library(tidyverse)
+library(udpipe)
+library(igraph)
+library(tidygraph)
+library(ggraph)
+
+# ---- 0. Settings you can change --------------------------------------------
+aliases           <- c("odysseus", "ulysses")  # names counted as "Odysseus"
+window            <- 3      # an adjective within +/- this many tokens of the name counts
+include_proximity <- TRUE   # FALSE = grammar-based matches only (stricter, fewer hits)
+min_count         <- 1      # adjective must describe Odysseus at least this often
+max_per_branch    <- 8      # max adjectives drawn per trait per translation
+
+trait_levels      <- c("Sly intellect", "Boastful ego", "Loyalty to home",
+                       "Strategic fighting", "Arduous leadership")
+translator_levels <- c("Fitzgerald", "Fagles", "Wilson")
+if (!exists("translator_colors")) {
+  translator_colors <- c(Fitzgerald = "#1b9e77", Fagles = "#d95f02", Wilson = "#7570b3")
+}
+
+if (!"book" %in% names(odyssey_lines)) odyssey_lines$book <- 1L  # fallback if old Section 3
+
+# ---- 1. Trait lexicon (EDIT ME) ---------------------------------------------
+# Each adjective is assigned to ONE trait (first list wins if repeated).
+# After the first run, check the "unmatched" table in Section 4 and add words.
+trait_words <- list(
+  "Sly intellect" = c(
+    "wily", "cunning", "clever", "crafty", "resourceful", "shrewd", "wise", "sly",
+    "subtle", "ingenious", "canny", "astute", "artful", "devious", "tricky",
+    "versatile", "inventive", "sharp", "calculating", "prudent", "thoughtful",
+    "sagacious", "guileful", "deceitful", "quick-witted", "intelligent", "cautious",
+    "careful", "wary", "observant", "inquisitive", "curious", "sensible",
+    "discreet", "mindful"),
+  "Boastful ego" = c(
+    "proud", "arrogant", "boastful", "vain", "haughty", "glorious", "famous",
+    "famed", "renowned", "illustrious", "great", "splendid", "magnificent",
+    "godlike", "divine", "noble", "grand", "insolent", "cocky", "vainglorious",
+    "overbearing", "headstrong", "reckless", "brazen", "celebrated", "legendary",
+    "distinguished", "exalted", "fabled", "superb", "brilliant", "excellent",
+    "lordly", "pompous", "conceited", "bragging"),
+  "Loyalty to home" = c(
+    "homesick", "loyal", "faithful", "steadfast", "longing", "yearning", "devoted",
+    "true", "constant", "homebound", "beloved", "dear", "lonely", "grieving",
+    "mournful", "tearful", "sorrowful", "heartsick", "wistful", "nostalgic",
+    "native", "sad", "sorrowing", "weeping", "bereft", "forlorn", "desolate",
+    "heartbroken", "distressed", "loving", "tender", "grief-stricken", "stricken"),
+  "Strategic fighting" = c(
+    "brave", "valiant", "fierce", "bold", "mighty", "strong", "warlike", "skilled",
+    "fearless", "courageous", "ruthless", "deadly", "daring", "formidable",
+    "stalwart", "savage", "relentless", "vengeful", "fearsome", "dangerous",
+    "swift", "agile", "unconquerable", "invincible", "victorious", "triumphant",
+    "stern", "grim", "implacable", "wrathful", "furious", "angry", "enraged",
+    "heroic", "gallant", "spirited", "expert", "tactical", "bloody", "armed",
+    "armored", "battle-hardened", "tough", "unyielding"),
+  "Arduous leadership" = c(
+    "enduring", "long-suffering", "weary", "patient", "resolute", "tireless",
+    "persistent", "determined", "stubborn", "commanding", "able", "firm", "hardy",
+    "sturdy", "stout", "tested", "battered", "worn", "exhausted", "troubled",
+    "afflicted", "wretched", "unhappy", "miserable", "suffering", "stranded",
+    "tormented", "tried", "unflinching", "indomitable", "unlucky", "unfortunate",
+    "ill-fated", "harried", "burdened", "hard-pressed", "shipwrecked", "lost",
+    "exiled", "wandering", "unwavering", "steady", "calm", "composed",
+    "authoritative", "capable", "royal", "kingly", "regal", "chief", "supreme",
+    "hard", "wearied", "unfaltering", "responsible")
+)
+
+trait_lexicon <- imap_dfr(trait_words, ~ tibble(adjective = .x, trait = .y)) |>
+  distinct(adjective, .keep_all = TRUE)
+
+# Generic adjectives that never describe a person's character
+adj_stop <- c("other", "own", "same", "such", "many", "much", "more", "most", "few",
+              "little", "last", "next", "first", "second", "third", "all", "every",
+              "each", "several", "whole", "certain", "only", "else", "new", "old",
+              "high", "long", "far", "near", "full", "half")
+
+# ---- 2. Part-of-speech tagging and parsing (udpipe) -------------------------
+# Adjectives are found with a grammar parser, so we can tell which adjectives
+# actually describe Odysseus. The first run downloads a small English model
+# (needs internet) and takes a few minutes; the result is cached to disk.
+ann_file <- "odyssey_udpipe_annotations.rds"
+
+if (file.exists(ann_file)) {
+  ann <- readRDS(ann_file)
+} else {
+  model_file <- list.files(pattern = "^english-ewt.*\\.udpipe$")
+  if (length(model_file) == 0) {
+    model_file <- udpipe_download_model(language = "english-ewt")$file_model
+  }
+  ud_model <- udpipe_load_model(model_file[1])
+  
+  # One document per translation per book keeps each parse job small
+  docs <- odyssey_lines |>
+    group_by(translator, book) |>
+    summarise(text = paste(text, collapse = " "), .groups = "drop") |>
+    mutate(doc_id = sprintf("%s__%02d", translator, book))
+  
+  ann <- udpipe_annotate(ud_model, x = docs$text, doc_id = docs$doc_id) |>
+    as.data.frame()
+  saveRDS(ann, ann_file)
+}
+
+ann <- ann |>
+  mutate(token_id      = suppressWarnings(as.integer(token_id)),
+         head_token_id = suppressWarnings(as.integer(head_token_id)),
+         token_l       = str_to_lower(token),
+         lemma_l       = str_to_lower(lemma),
+         translator    = str_extract(doc_id, "^[^_]+"),
+         # adjectives, plus participles used as adjectives ("enduring Odysseus")
+         is_adj = upos == "ADJ" |
+           (upos == "VERB" & str_detect(coalesce(feats, ""), "VerbForm=Part") &
+              dep_rel == "amod"),
+         adjective = if_else(upos == "ADJ", lemma_l, token_l)) |>
+  filter(!is.na(token_id))
+
+# ---- 3. Find adjectives that describe Odysseus ------------------------------
+# Only sentences that mention Odysseus by name are examined. Pronouns ("he")
+# are not resolved, so this captures the named / epithet descriptions.
+sent_keys <- ann |>
+  filter(token_l %in% aliases) |>
+  distinct(doc_id, paragraph_id, sentence_id)
+
+od_sents <- ann |>
+  semi_join(sent_keys, by = c("doc_id", "paragraph_id", "sentence_id"))
+
+empty_hits <- tibble(evidence = character(), translator = character(),
+                     adjective = character(), token_id = integer(),
+                     sentence = character())
+
+extract_adj <- function(s) {
+  od_ids <- s$token_id[s$token_l %in% aliases]
+  adj    <- s |> filter(is_adj)
+  if (length(od_ids) == 0 || nrow(adj) == 0) return(empty_hits)
+  
+  # (a) adjective directly modifies the name: "wily Odysseus"
+  direct <- adj |> filter(dep_rel == "amod", head_token_id %in% od_ids)
+  
+  # (b) predicate adjective with Odysseus as subject: "Odysseus was cunning"
+  pred_heads <- s |>
+    filter(dep_rel %in% c("nsubj", "nsubj:pass"), token_id %in% od_ids) |>
+    pull(head_token_id)
+  predicate <- adj |> filter(token_id %in% pred_heads)
+  
+  # (c) adjective on a noun in apposition: "Odysseus, the wily hero"
+  appos_nouns <- c(
+    s$head_token_id[s$token_id %in% od_ids & s$dep_rel == "appos"],
+    s$token_id[s$head_token_id %in% od_ids & s$dep_rel == "appos"]
+  )
+  appositive <- adj |> filter(dep_rel == "amod", head_token_id %in% appos_nouns)
+  
+  hits <- list(direct = direct, predicate = predicate, appositive = appositive)
+  
+  # (d) fallback: adjective sitting right next to the name (poetry parses badly)
+  if (include_proximity) {
+    hits$near <- adj |>
+      filter(map_lgl(token_id, ~ any(abs(.x - od_ids) <= window)))
+  }
+  
+  bind_rows(hits, .id = "evidence") |>
+    distinct(token_id, .keep_all = TRUE) |>
+    select(evidence, translator, adjective, token_id, sentence)
+}
+
+odysseus_adj <- od_sents |>
+  group_by(doc_id, paragraph_id, sentence_id) |>
+  group_modify(~ extract_adj(.x)) |>
+  ungroup() |>
+  filter(!adjective %in% adj_stop, nchar(adjective) > 2)
+
+# Quick look: how many descriptive adjectives were found, and by what evidence
+odysseus_adj |> count(translator, evidence) |> arrange(translator, desc(n))
+
+# Inspect a few examples in context to judge quality
+odysseus_adj |>
+  group_by(translator) |>
+  slice_sample(n = 5) |>
+  select(translator, adjective, evidence, sentence) |>
+  print(n = Inf, width = 140)
+
+# ---- 4. Map adjectives to traits; find shared vs. unique --------------------
+adj_counts <- odysseus_adj |>
+  count(translator, adjective, name = "n") |>
+  filter(n >= min_count)
+
+# Adjectives that describe Odysseus but are NOT in your lexicon yet.
+# Scan this list and add useful words to `trait_words` in Section 1.
+adj_counts |>
+  anti_join(trait_lexicon, by = "adjective") |>
+  arrange(translator, desc(n)) |>
+  group_by(translator) |>
+  slice_head(n = 25) |>
+  print(n = Inf)
+
+sharing_levels <- c("In all 3 translations", "In 2 translations", "In 1 translation")
+
+trait_adj <- adj_counts |>
+  inner_join(trait_lexicon, by = "adjective") |>
+  group_by(adjective) |>
+  mutate(n_translations = n_distinct(translator),
+         sharing = case_when(n_translations == 3 ~ sharing_levels[1],
+                             n_translations == 2 ~ sharing_levels[2],
+                             TRUE                ~ sharing_levels[3])) |>
+  ungroup()
+
+# Summary: adjectives and mentions per trait per translation
+trait_summary <- trait_adj |>
+  group_by(trait, translator) |>
+  summarise(distinct_adjectives = n(), mentions = sum(n), .groups = "drop") |>
+  arrange(factor(trait, trait_levels), translator)
+print(trait_summary, n = Inf)
+
+# SIMILARITIES: adjectives used for Odysseus in all three translations
+trait_adj |>
+  filter(n_translations == 3) |>
+  select(trait, adjective, translator, n) |>
+  pivot_wider(names_from = translator, values_from = n) |>
+  arrange(factor(trait, trait_levels), desc(rowSums(across(where(is.numeric))))) |>
+  print(n = Inf)
+
+# DIFFERENCES: adjectives that appear in only one translation
+trait_adj |>
+  filter(n_translations == 1) |>
+  arrange(factor(trait, trait_levels), translator, desc(n)) |>
+  select(trait, translator, adjective, n) |>
+  print(n = 60)
+
+# ---- 5. Build the tree ------------------------------------------------------
+leaf_tbl <- trait_adj |>
+  mutate(trait      = factor(trait, trait_levels),
+         translator = factor(translator, translator_levels)) |>
+  arrange(trait, translator, desc(n), adjective) |>
+  group_by(trait, translator) |>
+  slice_head(n = max_per_branch) |>
+  ungroup()
+
+traits_present <- trait_levels[trait_levels %in% as.character(leaf_tbl$trait)]
+
+branch_tbl <- leaf_tbl |>
+  distinct(trait, translator) |>
+  mutate(trait = as.character(trait), translator = as.character(translator),
+         name  = paste(trait, translator, sep = "|"))
+
+leaf_nodes <- leaf_tbl |>
+  mutate(trait = as.character(trait), translator = as.character(translator),
+         name   = paste(trait, translator, adjective, sep = "|"),
+         parent = paste(trait, translator, sep = "|"))
+
+nodes <- bind_rows(
+  tibble(name = "Odysseus", type = "root", label = "Odysseus"),
+  tibble(name = traits_present, type = "trait", label = traits_present,
+         trait = traits_present),
+  branch_tbl |>
+    transmute(name, type = "branch", label = translator, trait, translator),
+  leaf_nodes |>
+    transmute(name, type = "leaf", label = adjective, adjective, trait,
+              translator, n, sharing)
+)
+
+edges <- bind_rows(
+  tibble(from = "Odysseus", to = traits_present, translator = NA_character_),
+  branch_tbl |> transmute(from = trait, to = name, translator),
+  leaf_nodes |> transmute(from = parent, to = name, translator)
+)
+
+g   <- tbl_graph(nodes = nodes, edges = edges, directed = TRUE)
+lay <- create_layout(g, layout = "dendrogram", circular = TRUE)
+
+lay_df    <- as.data.frame(lay)
+lay_df$id <- seq_len(nrow(lay_df))
+
+# Leaf label positions: pushed outward, rotated to follow the circle,
+# and flipped on the left half so text is never upside down.
+leaf_df <- lay_df |>
+  filter(type == "leaf") |>
+  mutate(theta      = atan2(y, x),
+         flip       = abs(theta) > pi / 2,
+         text_angle = theta * 180 / pi + if_else(flip, 180, 0),
+         text_hjust = if_else(flip, 1, 0),
+         lx = x * 1.06, ly = y * 1.06,
+         sharing    = factor(sharing, levels = sharing_levels),
+         label_face = if_else(sharing == sharing_levels[1], "bold", "plain"))
+
+# Arcs linking the SAME adjective across translations (within a trait sector)
+leaf_ids <- lay_df |> filter(type == "leaf") |> select(id, trait, adjective, translator)
+pairs <- inner_join(leaf_ids, leaf_ids, by = c("trait", "adjective"),
+                    suffix = c("_a", "_b")) |>
+  filter(translator_a < translator_b)
+
+# ---- 6. Plot ----------------------------------------------------------------
+p <- ggraph(lay) +
+  geom_edge_diagonal(aes(edge_colour = translator), edge_width = 0.5, edge_alpha = 0.7) +
+  scale_edge_colour_manual(values = translator_colors, na.value = "grey65",
+                           guide = "none")
+
+if (nrow(pairs) > 0) {
+  p <- p + geom_conn_bundle(data = get_con(from = pairs$id_a, to = pairs$id_b),
+                            alpha = 0.45, colour = "grey30", width = 0.5,
+                            tension = 0.8)
+}
+
+p <- p +
+  geom_point(data = filter(lay_df, type == "branch"),
+             aes(x, y, color = translator), size = 3, inherit.aes = FALSE) +
+  geom_point(data = leaf_df,
+             aes(x, y, color = translator, size = n, shape = sharing),
+             inherit.aes = FALSE) +
+  geom_text(data = leaf_df,
+            aes(lx, ly, label = label, angle = text_angle, hjust = text_hjust,
+                color = translator, fontface = label_face),
+            size = 3, inherit.aes = FALSE, show.legend = FALSE) +
+  geom_label(data = filter(lay_df, type == "trait"),
+             aes(x, y, label = label), fontface = "bold", size = 3.6,
+             fill = "white", inherit.aes = FALSE) +
+  geom_label(data = filter(lay_df, type == "root"),
+             aes(x, y, label = label), fontface = "bold", size = 4.5,
+             fill = "black", color = "white", inherit.aes = FALSE) +
+  scale_color_manual(values = translator_colors, name = "Translation") +
+  scale_shape_manual(values = setNames(c(18, 17, 16), sharing_levels),
+                     name = "Adjective used in", drop = FALSE) +
+  scale_size_continuous(range = c(1.8, 6), name = "Mentions near\n\"Odysseus\"") +
+  scale_x_continuous(expand = expansion(mult = 0.35)) +
+  scale_y_continuous(expand = expansion(mult = 0.35)) +
+  coord_fixed(clip = "off") +
+  guides(color = guide_legend(override.aes = list(size = 4), order = 1),
+         shape = guide_legend(override.aes = list(size = 4), order = 2),
+         size  = guide_legend(order = 3)) +
+  labs(title = "How Three Translations Describe Odysseus",
+       subtitle = paste("Trait -> translation -> adjective. Grey arcs link the same adjective across translations;",
+                        "bold labels appear in all three.", sep = "\n")) +
+  theme_void(base_size = 12) +
+  theme(legend.position = "bottom",
+        legend.box = "horizontal",
+        plot.title = element_text(face = "bold", size = 18, hjust = 0.5),
+        plot.subtitle = element_text(size = 10, hjust = 0.5, color = "grey30"),
+        plot.background = element_rect(fill = "white", colour = NA),
+        plot.margin = margin(10, 10, 10, 10))
+
+print(p)
+
+ggsave("odysseus_radial_tree.png", p, width = 16, height = 16, dpi = 300, bg = "white")
 ```
