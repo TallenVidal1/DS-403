@@ -61,6 +61,8 @@ page_ranges <- list(
   Fagles     = c(start = 2, end = NA),
   Wilson     = c(start = 101, end = 497)
 )
+
+translator_colors <- c(Fitzgerald = "#1b9e77", Fagles = "#d95f02", Wilson = "#7570b3")
 ```
 
 ## Assigning the start and end for when to parse text data
@@ -339,10 +341,53 @@ raw_lines |>
   summarise(last_homer_page = max(page))
 ```
 
-## Visualization Section:
+## Tokenize
+
+```{r}
+# ---- 4. Tokenize ------------------------------------------------------------
+tidy_words <- odyssey_lines |>
+  unnest_tokens(word, text) |>
+  mutate(word = str_remove_all(word, "^'+|'+$")) |>   # trim stray apostrophes
+  filter(word != "", !str_detect(word, "\\d"))
+
+# Position of each word within its translation (0 to 1)
+tidy_words <- tidy_words |>
+  group_by(translator) |>
+  mutate(word_index = row_number(),
+         position   = word_index / n()) |>
+  ungroup()
+
+# Non-stop-word version (for content analysis)
+data("stop_words")
+custom_stops <- tibble(word = c("thy", "thee", "thou", "thine", "hath", "doth",
+                                "shall", "will", "said", "say", "came", "come",
+                                "went", "one", "now", "upon", "on", "may"))
+content_words <- tidy_words |>
+  anti_join(stop_words, by = "word") |>
+  anti_join(custom_stops, by = "word")
+```
+
+## Basic Visualizations:
+
+```{r}
+# ---- 5. Plot 1: Overall length of each translation -------------------------
+word_totals <- tidy_words |> count(translator, name = "total_words")
+
+ggplot(word_totals, aes(translator, total_words, fill = translator)) +
+  geom_col(width = 0.6, show.legend = FALSE) +
+  geom_text(aes(label = comma(total_words)), vjust = -0.4) +
+  scale_fill_manual(values = translator_colors) +
+  scale_y_continuous(labels = comma, expand = expansion(mult = c(0, 0.1))) +
+  labs(title = "Total Word Count by Translation",
+       x = NULL, y = "Words")
+```
+
+## More Plots:
 
 ```{r}
 
 ```
 
-The `echo: false` option disables the printing of code (only output is displayed).
+```{r}
+
+```
