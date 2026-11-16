@@ -694,7 +694,7 @@ tidy_words |>
   labs(title = "Words Driving Sentiment Scores", x = NULL, y = "Count")
 ```
 
-## Big Radial Tree Diagram
+## Radial Tree Diagrams
 
 ```{r}
 # =============================================================================
