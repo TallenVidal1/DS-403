@@ -1025,7 +1025,7 @@ edges <- bind_rows(
 )
 
 # ---- 4. Plot ----------------------------------------------------------------
-p <- ggplot() +
+p2 <- ggplot() +
   geom_segment(data = edges,
                aes(x = x0, y = y0, xend = x1, yend = y1, color = trait),
                linewidth = 0.6, alpha = 0.7) +
@@ -1053,7 +1053,178 @@ p <- ggplot() +
         legend.position = "bottom",
         plot.background = element_rect(fill = "white", colour = NA))
 
-print(p)
-ggsave(paste0("odysseus_radial_tree_", chosen, ".png"), p,
+print(p2)
+ggsave(paste0("odysseus_radial_tree_", chosen, ".png"), p2,
+       width = 12, height = 12, dpi = 200, bg = "white")
+```
+
+```{r}
+
+library(tidyverse)
+library(tidytext)   # only used for its stop_words list
+
+# ---- Settings ---------------------------------------------------------------
+chosen        <- "Wilson"   # "Fitzgerald", "Fagles", or "Wilson"
+window        <- 5          # words on each side of "Odysseus" to look at
+max_per_trait <- 8          # most words drawn per trait
+aliases       <- c("odysseus", "ulysses")
+
+if (!exists("odyssey_lines") && file.exists("odyssey_lines.rds")) {
+  odyssey_lines <- readRDS("odyssey_lines.rds")
+}
+stopifnot(exists("odyssey_lines"), chosen %in% odyssey_lines$translator)
+
+# ---- Trait word lists (edit freely) ------------------------------------------
+trait_levels <- c("Cunning", "Ego", "Loyalty",
+                  "Tactical Brilliance", "Arduous Leadership")
+
+trait_words <- list(
+  "Cunning" = c(
+    "wily", "cunning", "clever", "crafty", "resourceful", "shrewd", "wise", "sly",
+    "subtle", "ingenious", "canny", "astute", "artful", "devious", "tricky",
+    "versatile", "inventive", "sharp", "calculating", "prudent", "thoughtful",
+    "sagacious", "guileful", "deceitful", "quick-witted", "intelligent", "cautious",
+    "careful", "wary", "observant", "inquisitive", "curious", "sensible",
+    "discreet", "mindful"),
+  "Ego" = c(
+    "proud", "arrogant", "boastful", "vain", "haughty", "glorious", "famous",
+    "famed", "renowned", "illustrious", "great", "splendid", "magnificent",
+    "godlike", "divine", "noble", "grand", "insolent", "cocky", "vainglorious",
+    "overbearing", "headstrong", "reckless", "brazen", "celebrated", "legendary",
+    "distinguished", "exalted", "fabled", "superb", "brilliant", "excellent",
+    "lordly", "pompous", "conceited", "bragging"),
+  "Loyalty" = c(
+    "homesick", "loyal", "faithful", "steadfast", "longing", "yearning", "devoted",
+    "true", "constant", "homebound", "beloved", "dear", "lonely", "grieving",
+    "mournful", "tearful", "sorrowful", "heartsick", "wistful", "nostalgic",
+    "native", "sad", "sorrowing", "weeping", "bereft", "forlorn", "desolate",
+    "heartbroken", "distressed", "loving", "tender", "grief-stricken", "stricken"),
+  "Tactical Brilliance" = c(
+    "brave", "valiant", "fierce", "bold", "mighty", "strong", "warlike", "skilled",
+    "fearless", "courageous", "ruthless", "deadly", "daring", "formidable",
+    "stalwart", "savage", "relentless", "vengeful", "fearsome", "dangerous",
+    "swift", "agile", "unconquerable", "invincible", "victorious", "triumphant",
+    "stern", "grim", "implacable", "wrathful", "furious", "angry", "enraged",
+    "heroic", "gallant", "spirited", "expert", "tactical", "bloody", "armed",
+    "armored", "battle-hardened", "tough", "unyielding"),
+  "Arduous Leadership" = c(
+    "enduring", "long-suffering", "weary", "patient", "resolute", "tireless",
+    "persistent", "determined", "stubborn", "commanding", "able", "firm", "hardy",
+    "sturdy", "stout", "tested", "battered", "worn", "exhausted", "troubled",
+    "afflicted", "wretched", "unhappy", "miserable", "suffering", "stranded",
+    "tormented", "tried", "unflinching", "indomitable", "unlucky", "unfortunate",
+    "ill-fated", "harried", "burdened", "hard-pressed", "shipwrecked", "lost",
+    "exiled", "wandering", "unwavering", "steady", "calm", "composed",
+    "authoritative", "capable", "royal", "kingly", "regal", "chief", "supreme",
+    "hard", "wearied", "unfaltering", "responsible")
+)
+
+trait_lexicon <- imap_dfr(trait_words, ~ tibble(word = .x, trait = .y)) |>
+  distinct(word, .keep_all = TRUE)
+
+trait_colors <- c("Cunning"       = "#1b9e77",
+                  "Ego"        = "#d95f02",
+                  "Loyalty"     = "#7570b3",
+                  "Tactical Brilliance"  = "#e7298a",
+                  "Arduous Leadership"  = "#66a61e")
+
+# ---- 1. Words near "Odysseus" ------------------------------------------------
+words <- odyssey_lines |>
+  filter(translator == chosen) |>
+  pull(text) |>
+  paste(collapse = " ") |>
+  str_to_lower() |>
+  str_extract_all("[a-z][a-z'-]*") |>
+  unlist() |>
+  str_remove("('s|')$")                      # Odysseus' / Odysseus's -> odysseus
+
+od_pos   <- which(words %in% aliases)
+near_idx <- unique(unlist(lapply(od_pos, function(i) {
+  setdiff(max(1, i - window):min(length(words), i + window), i)
+})))
+
+near_counts <- tibble(word = words[near_idx]) |> count(word, name = "n")
+
+cat(chosen, ": found", length(od_pos), "mentions of Odysseus\n")
+
+# Words near his name that are NOT in your lists (add useful ones above)
+near_counts |>
+  anti_join(trait_lexicon, by = "word") |>
+  anti_join(stop_words, by = "word") |>
+  arrange(desc(n)) |>
+  slice_head(n = 30) |>
+  print(n = 30)
+
+# ---- 2. Keep the top words for each trait ------------------------------------
+leaf_tbl <- near_counts |>
+  inner_join(trait_lexicon, by = "word") |>
+  mutate(trait = factor(trait, levels = trait_levels)) |>
+  arrange(trait, desc(n), word) |>
+  group_by(trait) |>
+  slice_head(n = max_per_trait) |>
+  ungroup()
+
+if (nrow(leaf_tbl) == 0) stop("No trait words found near Odysseus. Try a larger `window`.")
+print(leaf_tbl |> select(trait, word, n), n = Inf)
+
+# ---- 3. Radial layout (plain trigonometry, no extra packages) ---------------
+traits_present <- trait_levels[trait_levels %in% as.character(leaf_tbl$trait)]
+n_leaves <- nrow(leaf_tbl)
+gap      <- 1.5                               # empty space between trait sectors
+
+leaf_tbl <- leaf_tbl |>
+  mutate(slot  = row_number() + (match(as.character(trait), traits_present) - 1) * gap,
+         angle = 2 * pi * slot / (n_leaves + length(traits_present) * gap),
+         x = 3 * cos(angle),
+         y = 3 * sin(angle),
+         flip       = cos(angle) < 0,                         # keep text upright
+         text_angle = angle * 180 / pi + if_else(flip, 180, 0),
+         text_hjust = if_else(flip, 1, 0),
+         lx = 3.15 * cos(angle),
+         ly = 3.15 * sin(angle))
+
+trait_nodes <- leaf_tbl |>
+  group_by(trait) |>
+  summarise(angle = mean(angle), .groups = "drop") |>
+  mutate(x = 1.5 * cos(angle), y = 1.5 * sin(angle))
+
+edges <- bind_rows(
+  trait_nodes |> transmute(trait, x0 = 0, y0 = 0, x1 = x, y1 = y),
+  leaf_tbl |>
+    left_join(trait_nodes |> select(trait, tx = x, ty = y), by = "trait") |>
+    transmute(trait, x0 = tx, y0 = ty, x1 = x, y1 = y)
+)
+
+# ---- 4. Plot ----------------------------------------------------------------
+p3 <- ggplot() +
+  geom_segment(data = edges,
+               aes(x = x0, y = y0, xend = x1, yend = y1, color = trait),
+               linewidth = 0.6, alpha = 0.7) +
+  geom_point(data = leaf_tbl, aes(x, y, size = n, color = trait)) +
+  geom_text(data = leaf_tbl,
+            aes(lx, ly, label = word, angle = text_angle, hjust = text_hjust,
+                color = trait),
+            size = 3.6, show.legend = FALSE) +
+  geom_label(data = trait_nodes,
+             aes(x, y, label = trait, color = trait),
+             fontface = "bold", size = 3.5, fill = "white", show.legend = FALSE) +
+  annotate("label", x = 0, y = 0, label = "Odysseus",
+           fontface = "bold", size = 4.5, fill = "black", color = "white") +
+  scale_color_manual(values = trait_colors, guide = "none") +
+  scale_size_continuous(range = c(2, 8), name = "Mentions near\nOdysseus") +
+  scale_x_continuous(expand = expansion(mult = 0.3)) +
+  scale_y_continuous(expand = expansion(mult = 0.3)) +
+  coord_fixed() +
+  labs(title = paste("How the", chosen, "Translation Describes Odysseus"),
+       subtitle = paste0("Trait words found within ", window,
+                         " words of his name; point size = number of mentions")) +
+  theme_void(base_size = 12) +
+  theme(plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
+        plot.subtitle = element_text(size = 10, hjust = 0.5, color = "grey30"),
+        legend.position = "bottom",
+        plot.background = element_rect(fill = "white", colour = NA))
+
+print(p3)
+ggsave(paste0("odysseus_radial_tree_", chosen, ".png"), p3,
        width = 12, height = 12, dpi = 200, bg = "white")
 ```
