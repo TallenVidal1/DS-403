@@ -1255,17 +1255,41 @@ edges <- bind_rows(
     transmute(trait, x0 = tx, y0 = ty, x1 = x, y1 = y)
 )
 
-# ---- 4. Plot: word size = how often the word describes Odysseus --------------
-font_range <- c(3, 10)   # smallest and largest word size. Lower the 10 if big words overlap.
+# ---- 4a. Sizes: one rule drives both the dot and the word -------------------
+font_range <- c(3, 10)         # smallest / largest word size
+dot_range  <- c(0.035, 0.15)   # smallest / largest dot RADIUS (in plot units)
+text_pad   <- 0.06             # gap between the edge of a dot and the start of its word
 
+leaf_tbl <- leaf_tbl |>
+  mutate(rel   = if (max(n) > min(n)) (n - min(n)) / (max(n) - min(n)) else 0.5,
+         dot_r = dot_range[1] + rel * (dot_range[2] - dot_range[1]),
+         # words now start just past the EDGE of their own dot, so a big dot
+         # pushes its word further out instead of covering it
+         lx = (3 + dot_r + text_pad) * cos(angle),
+         ly = (3 + dot_r + text_pad) * sin(angle))
+
+# Dots are drawn as circles in plot units (not points in millimetres), so the
+# spacing between a dot and its word stays correct at any window size.
+circle_pts <- 40
+dots <- leaf_tbl |>
+  mutate(id = row_number()) |>
+  select(id, trait, x, y, dot_r) |>
+  uncount(circle_pts) |>
+  group_by(id) |>
+  mutate(t  = seq(0, 2 * pi, length.out = circle_pts),
+         px = x + dot_r * cos(t),
+         py = y + dot_r * sin(t)) |>
+  ungroup()
+
+# ---- 4b. Plot ----------------------------------------------------------------
 p3 <- ggplot() +
   # tree branches
   geom_segment(data = edges,
                aes(x = x0, y = y0, xend = x1, yend = y1, color = trait),
                linewidth = 0.6, alpha = 0.7) +
-  # small fixed-size tip at the end of each branch (no longer encodes frequency)
-  geom_point(data = leaf_tbl, aes(x, y, color = trait), size = 1.5) +
-  # the words: font size is proportional to the number of mentions
+  # dots: radius proportional to mentions
+  geom_polygon(data = dots, aes(px, py, group = id, fill = trait), color = NA) +
+  # words: font size proportional to mentions
   geom_text(data = leaf_tbl,
             aes(lx, ly, label = word, angle = text_angle, hjust = text_hjust,
                 color = trait, size = n)) +
@@ -1276,15 +1300,14 @@ p3 <- ggplot() +
   annotate("label", x = 0, y = 0, label = "Odysseus",
            fontface = "bold", size = 4.5, fill = "black", color = "white") +
   scale_color_manual(values = trait_colors, guide = "none") +
-  # scale_radius maps mentions to font size in a straight line, so a word with
-  # twice the mentions gets (roughly) a proportionally bigger font
+  scale_fill_manual(values  = trait_colors, guide = "none") +
   scale_radius(range = font_range, name = "Mentions near\nOdysseus") +
   scale_x_continuous(expand = expansion(mult = 0.35)) +
   scale_y_continuous(expand = expansion(mult = 0.35)) +
   coord_fixed() +
   labs(title = paste("How the", chosen, "Translation Describes Odysseus"),
        subtitle = paste0("Trait words found within ", window,
-                         " words of his name; bigger word = more mentions")) +
+                         " words of his name; bigger word and dot = more mentions")) +
   theme_void(base_size = 12) +
   theme(plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
         plot.subtitle = element_text(size = 10, hjust = 0.5, color = "grey30"),
@@ -1293,5 +1316,5 @@ p3 <- ggplot() +
 
 print(p3)
 #ggsave(paste0("odysseus_radial_tree_", chosen, ".png"), p3,
-      # width = 14, height = 14, dpi = 200, bg = "white")
+#       width = 14, height = 14, dpi = 200, bg = "white")
 ```
