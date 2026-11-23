@@ -723,31 +723,31 @@ if (!exists("odyssey_lines") && file.exists("odyssey_lines.rds")) {
 stopifnot(exists("odyssey_lines"), chosen %in% odyssey_lines$translator)
 
 # ---- Trait word lists (edit freely) ------------------------------------------
-trait_levels <- c("Sly intellect", "Boastful ego", "Loyalty to home",
-                  "Strategic fighting", "Arduous leadership")
+trait_levels <- c("Cunning", "Ego", "Loyalty",
+                  "Tactical Brilliance", "Arduous Leadership")
 
 trait_words <- list(
-  "Sly intellect" = c(
+  "Cunning" = c(
     "wily", "cunning", "clever", "crafty", "resourceful", "shrewd", "wise", "sly",
     "subtle", "ingenious", "canny", "astute", "artful", "devious", "tricky",
     "versatile", "inventive", "sharp", "calculating", "prudent", "thoughtful",
     "sagacious", "guileful", "deceitful", "quick-witted", "intelligent", "cautious",
     "careful", "wary", "observant", "inquisitive", "curious", "sensible",
     "discreet", "mindful"),
-  "Boastful ego" = c(
+  "Ego" = c(
     "proud", "arrogant", "boastful", "vain", "haughty", "glorious", "famous",
     "famed", "renowned", "illustrious", "great", "splendid", "magnificent",
     "godlike", "divine", "noble", "grand", "insolent", "cocky", "vainglorious",
     "overbearing", "headstrong", "reckless", "brazen", "celebrated", "legendary",
     "distinguished", "exalted", "fabled", "superb", "brilliant", "excellent",
     "lordly", "pompous", "conceited", "bragging"),
-  "Loyalty to home" = c(
+  "Loyalty" = c(
     "homesick", "loyal", "faithful", "steadfast", "longing", "yearning", "devoted",
     "true", "constant", "homebound", "beloved", "dear", "lonely", "grieving",
     "mournful", "tearful", "sorrowful", "heartsick", "wistful", "nostalgic",
     "native", "sad", "sorrowing", "weeping", "bereft", "forlorn", "desolate",
     "heartbroken", "distressed", "loving", "tender", "grief-stricken", "stricken"),
-  "Strategic fighting" = c(
+  "Tactical Brilliance" = c(
     "brave", "valiant", "fierce", "bold", "mighty", "strong", "warlike", "skilled",
     "fearless", "courageous", "ruthless", "deadly", "daring", "formidable",
     "stalwart", "savage", "relentless", "vengeful", "fearsome", "dangerous",
@@ -755,7 +755,7 @@ trait_words <- list(
     "stern", "grim", "implacable", "wrathful", "furious", "angry", "enraged",
     "heroic", "gallant", "spirited", "expert", "tactical", "bloody", "armed",
     "armored", "battle-hardened", "tough", "unyielding"),
-  "Arduous leadership" = c(
+  "Arduous Leadership" = c(
     "enduring", "long-suffering", "weary", "patient", "resolute", "tireless",
     "persistent", "determined", "stubborn", "commanding", "able", "firm", "hardy",
     "sturdy", "stout", "tested", "battered", "worn", "exhausted", "troubled",
@@ -770,11 +770,11 @@ trait_words <- list(
 trait_lexicon <- imap_dfr(trait_words, ~ tibble(word = .x, trait = .y)) |>
   distinct(word, .keep_all = TRUE)
 
-trait_colors <- c("Sly intellect"       = "#1b9e77",
-                  "Boastful ego"        = "#d95f02",
-                  "Loyalty to home"     = "#7570b3",
-                  "Strategic fighting"  = "#e7298a",
-                  "Arduous leadership"  = "#66a61e")
+trait_colors <- c("Cunning"       = "#FF5633",
+                  "Ego"        = "#E32B21",
+                  "Loyalty"     = "#622D4C",
+                  "Tactical Brilliance"  = "#004411",
+                  "Arduous Leadership"  = "#01515A")
 
 # ---- 1. Words near "Odysseus" ------------------------------------------------
 words <- odyssey_lines |>
@@ -843,29 +843,59 @@ edges <- bind_rows(
     transmute(trait, x0 = tx, y0 = ty, x1 = x, y1 = y)
 )
 
-# ---- 4. Plot ----------------------------------------------------------------
+# ---- 4a. Sizes: one rule drives both the dot and the word -------------------
+font_range <- c(3, 10)         # smallest / largest word size
+dot_range  <- c(0.035, 0.15)   # smallest / largest dot RADIUS (in plot units)
+text_pad   <- 0.06             # gap between the edge of a dot and the start of its word
+
+leaf_tbl <- leaf_tbl |>
+  mutate(rel   = if (max(n) > min(n)) (n - min(n)) / (max(n) - min(n)) else 0.5,
+         dot_r = dot_range[1] + rel * (dot_range[2] - dot_range[1]),
+         # words now start just past the EDGE of their own dot, so a big dot
+         # pushes its word further out instead of covering it
+         lx = (3 + dot_r + text_pad) * cos(angle),
+         ly = (3 + dot_r + text_pad) * sin(angle))
+
+# Dots are drawn as circles in plot units (not points in millimetres), so the
+# spacing between a dot and its word stays correct at any window size.
+circle_pts <- 40
+dots <- leaf_tbl |>
+  mutate(id = row_number()) |>
+  select(id, trait, x, y, dot_r) |>
+  uncount(circle_pts) |>
+  group_by(id) |>
+  mutate(t  = seq(0, 2 * pi, length.out = circle_pts),
+         px = x + dot_r * cos(t),
+         py = y + dot_r * sin(t)) |>
+  ungroup()
+
+# ---- 4b. Plot ----------------------------------------------------------------
 p <- ggplot() +
+  # tree branches
   geom_segment(data = edges,
                aes(x = x0, y = y0, xend = x1, yend = y1, color = trait),
                linewidth = 0.6, alpha = 0.7) +
-  geom_point(data = leaf_tbl, aes(x, y, size = n, color = trait)) +
+  # dots: radius proportional to mentions
+  geom_polygon(data = dots, aes(px, py, group = id, fill = trait), color = NA) +
+  # words: font size proportional to mentions
   geom_text(data = leaf_tbl,
             aes(lx, ly, label = word, angle = text_angle, hjust = text_hjust,
-                color = trait),
-            size = 3.6, show.legend = FALSE) +
+                color = trait, size = n)) +
+  # trait labels and center
   geom_label(data = trait_nodes,
              aes(x, y, label = trait, color = trait),
              fontface = "bold", size = 3.5, fill = "white", show.legend = FALSE) +
   annotate("label", x = 0, y = 0, label = "Odysseus",
            fontface = "bold", size = 4.5, fill = "black", color = "white") +
   scale_color_manual(values = trait_colors, guide = "none") +
-  scale_size_continuous(range = c(2, 8), name = "Mentions near\nOdysseus") +
-  scale_x_continuous(expand = expansion(mult = 0.3)) +
-  scale_y_continuous(expand = expansion(mult = 0.3)) +
+  scale_fill_manual(values  = trait_colors, guide = "none") +
+  scale_radius(range = font_range, name = "Mentions near\nOdysseus") +
+  scale_x_continuous(expand = expansion(mult = 0.35)) +
+  scale_y_continuous(expand = expansion(mult = 0.35)) +
   coord_fixed() +
   labs(title = paste("How the", chosen, "Translation Describes Odysseus"),
        subtitle = paste0("Trait words found within ", window,
-                         " words of his name; point size = number of mentions")) +
+                         " words of his name; bigger word and dot = more mentions")) +
   theme_void(base_size = 12) +
   theme(plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
         plot.subtitle = element_text(size = 10, hjust = 0.5, color = "grey30"),
@@ -873,8 +903,8 @@ p <- ggplot() +
         plot.background = element_rect(fill = "white", colour = NA))
 
 print(p)
-ggsave(paste0("odysseus_radial_tree_", chosen, ".png"), p,
-       width = 12, height = 12, dpi = 200, bg = "white")
+#ggsave(paste0("odysseus_radial_tree_", chosen, ".png"), p,
+#       width = 14, height = 14, dpi = 200, bg = "white")
 ```
 
 ```{r}
@@ -951,11 +981,11 @@ trait_words <- list(
 trait_lexicon <- imap_dfr(trait_words, ~ tibble(word = .x, trait = .y)) |>
   distinct(word, .keep_all = TRUE)
 
-trait_colors <- c("Cunning"       = "#1b9e77",
-                  "Ego"        = "#d95f02",
-                  "Loyalty"     = "#7570b3",
-                  "Tactical Brilliance"  = "#e7298a",
-                  "Arduous Leadership"  = "#66a61e")
+trait_colors <- c("Cunning"       = "#FF5633",
+                  "Ego"        = "#E32B21",
+                  "Loyalty"     = "#622D4C",
+                  "Tactical Brilliance"  = "#004411",
+                  "Arduous Leadership"  = "#01515A")
 
 # ---- 1. Words near "Odysseus" ------------------------------------------------
 words <- odyssey_lines |>
@@ -1024,29 +1054,59 @@ edges <- bind_rows(
     transmute(trait, x0 = tx, y0 = ty, x1 = x, y1 = y)
 )
 
-# ---- 4. Plot ----------------------------------------------------------------
+# ---- 4a. Sizes: one rule drives both the dot and the word -------------------
+font_range <- c(3, 10)         # smallest / largest word size
+dot_range  <- c(0.035, 0.15)   # smallest / largest dot RADIUS (in plot units)
+text_pad   <- 0.06             # gap between the edge of a dot and the start of its word
+
+leaf_tbl <- leaf_tbl |>
+  mutate(rel   = if (max(n) > min(n)) (n - min(n)) / (max(n) - min(n)) else 0.5,
+         dot_r = dot_range[1] + rel * (dot_range[2] - dot_range[1]),
+         # words now start just past the EDGE of their own dot, so a big dot
+         # pushes its word further out instead of covering it
+         lx = (3 + dot_r + text_pad) * cos(angle),
+         ly = (3 + dot_r + text_pad) * sin(angle))
+
+# Dots are drawn as circles in plot units (not points in millimetres), so the
+# spacing between a dot and its word stays correct at any window size.
+circle_pts <- 40
+dots <- leaf_tbl |>
+  mutate(id = row_number()) |>
+  select(id, trait, x, y, dot_r) |>
+  uncount(circle_pts) |>
+  group_by(id) |>
+  mutate(t  = seq(0, 2 * pi, length.out = circle_pts),
+         px = x + dot_r * cos(t),
+         py = y + dot_r * sin(t)) |>
+  ungroup()
+
+# ---- 4b. Plot ----------------------------------------------------------------
 p2 <- ggplot() +
+  # tree branches
   geom_segment(data = edges,
                aes(x = x0, y = y0, xend = x1, yend = y1, color = trait),
                linewidth = 0.6, alpha = 0.7) +
-  geom_point(data = leaf_tbl, aes(x, y, size = n, color = trait)) +
+  # dots: radius proportional to mentions
+  geom_polygon(data = dots, aes(px, py, group = id, fill = trait), color = NA) +
+  # words: font size proportional to mentions
   geom_text(data = leaf_tbl,
             aes(lx, ly, label = word, angle = text_angle, hjust = text_hjust,
-                color = trait),
-            size = 3.6, show.legend = FALSE) +
+                color = trait, size = n)) +
+  # trait labels and center
   geom_label(data = trait_nodes,
              aes(x, y, label = trait, color = trait),
              fontface = "bold", size = 3.5, fill = "white", show.legend = FALSE) +
   annotate("label", x = 0, y = 0, label = "Odysseus",
            fontface = "bold", size = 4.5, fill = "black", color = "white") +
   scale_color_manual(values = trait_colors, guide = "none") +
-  scale_size_continuous(range = c(2, 8), name = "Mentions near\nOdysseus") +
-  scale_x_continuous(expand = expansion(mult = 0.3)) +
-  scale_y_continuous(expand = expansion(mult = 0.3)) +
+  scale_fill_manual(values  = trait_colors, guide = "none") +
+  scale_radius(range = font_range, name = "Mentions near\nOdysseus") +
+  scale_x_continuous(expand = expansion(mult = 0.35)) +
+  scale_y_continuous(expand = expansion(mult = 0.35)) +
   coord_fixed() +
   labs(title = paste("How the", chosen, "Translation Describes Odysseus"),
        subtitle = paste0("Trait words found within ", window,
-                         " words of his name; point size = number of mentions")) +
+                         " words of his name; bigger word and dot = more mentions")) +
   theme_void(base_size = 12) +
   theme(plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
         plot.subtitle = element_text(size = 10, hjust = 0.5, color = "grey30"),
@@ -1054,8 +1114,8 @@ p2 <- ggplot() +
         plot.background = element_rect(fill = "white", colour = NA))
 
 print(p2)
-ggsave(paste0("odysseus_radial_tree_", chosen, ".png"), p2,
-       width = 12, height = 12, dpi = 200, bg = "white")
+#ggsave(paste0("odysseus_radial_tree_", chosen, ".png"), p2,
+#       width = 14, height = 14, dpi = 200, bg = "white")
 ```
 
 ```{r}
@@ -1122,11 +1182,11 @@ trait_words <- list(
 trait_lexicon <- imap_dfr(trait_words, ~ tibble(word = .x, trait = .y)) |>
   distinct(word, .keep_all = TRUE)
 
-trait_colors <- c("Cunning"       = "#1b9e77",
-                  "Ego"        = "#d95f02",
-                  "Loyalty"     = "#7570b3",
-                  "Tactical Brilliance"  = "#e7298a",
-                  "Arduous Leadership"  = "#66a61e")
+trait_colors <- c("Cunning"       = "#FF5633",
+                  "Ego"        = "#E32B21",
+                  "Loyalty"     = "#622D4C",
+                  "Tactical Brilliance"  = "#004411",
+                  "Arduous Leadership"  = "#01515A")
 
 # ---- 1. Words near "Odysseus" ------------------------------------------------
 words <- odyssey_lines |>
@@ -1195,29 +1255,36 @@ edges <- bind_rows(
     transmute(trait, x0 = tx, y0 = ty, x1 = x, y1 = y)
 )
 
-# ---- 4. Plot ----------------------------------------------------------------
+# ---- 4. Plot: word size = how often the word describes Odysseus --------------
+font_range <- c(3, 10)   # smallest and largest word size. Lower the 10 if big words overlap.
+
 p3 <- ggplot() +
+  # tree branches
   geom_segment(data = edges,
                aes(x = x0, y = y0, xend = x1, yend = y1, color = trait),
                linewidth = 0.6, alpha = 0.7) +
-  geom_point(data = leaf_tbl, aes(x, y, size = n, color = trait)) +
+  # small fixed-size tip at the end of each branch (no longer encodes frequency)
+  geom_point(data = leaf_tbl, aes(x, y, color = trait), size = 1.5) +
+  # the words: font size is proportional to the number of mentions
   geom_text(data = leaf_tbl,
             aes(lx, ly, label = word, angle = text_angle, hjust = text_hjust,
-                color = trait),
-            size = 3.6, show.legend = FALSE) +
+                color = trait, size = n)) +
+  # trait labels and center
   geom_label(data = trait_nodes,
              aes(x, y, label = trait, color = trait),
              fontface = "bold", size = 3.5, fill = "white", show.legend = FALSE) +
   annotate("label", x = 0, y = 0, label = "Odysseus",
            fontface = "bold", size = 4.5, fill = "black", color = "white") +
   scale_color_manual(values = trait_colors, guide = "none") +
-  scale_size_continuous(range = c(2, 8), name = "Mentions near\nOdysseus") +
-  scale_x_continuous(expand = expansion(mult = 0.3)) +
-  scale_y_continuous(expand = expansion(mult = 0.3)) +
+  # scale_radius maps mentions to font size in a straight line, so a word with
+  # twice the mentions gets (roughly) a proportionally bigger font
+  scale_radius(range = font_range, name = "Mentions near\nOdysseus") +
+  scale_x_continuous(expand = expansion(mult = 0.35)) +
+  scale_y_continuous(expand = expansion(mult = 0.35)) +
   coord_fixed() +
   labs(title = paste("How the", chosen, "Translation Describes Odysseus"),
        subtitle = paste0("Trait words found within ", window,
-                         " words of his name; point size = number of mentions")) +
+                         " words of his name; bigger word = more mentions")) +
   theme_void(base_size = 12) +
   theme(plot.title = element_text(face = "bold", size = 16, hjust = 0.5),
         plot.subtitle = element_text(size = 10, hjust = 0.5, color = "grey30"),
@@ -1225,6 +1292,6 @@ p3 <- ggplot() +
         plot.background = element_rect(fill = "white", colour = NA))
 
 print(p3)
-ggsave(paste0("odysseus_radial_tree_", chosen, ".png"), p3,
-       width = 12, height = 12, dpi = 200, bg = "white")
+#ggsave(paste0("odysseus_radial_tree_", chosen, ".png"), p3,
+      # width = 14, height = 14, dpi = 200, bg = "white")
 ```
