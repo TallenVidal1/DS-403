@@ -1,0 +1,50 @@
+---
+title: "Fresh_slate"
+format: html
+editor: visual
+---
+
+## Refined Documentation
+
+Organization is king and the other document was getting to messy and long to run through. Good first draft but now we have to lock in on a cleaner file that only takes the code that I need.
+
+## Running Code
+
+When you click the **Render** button a document will be generated that includes both content and the output of embedded code. You can embed code like this:
+
+```{r}
+### Libraries ###
+
+library(tidyverse)
+library(bayesrules)
+library(janitor)
+library(e1071)
+library(tidytext)
+library(ggplot2)
+
+library(pdftools)
+library(tidytext)
+library(wordcloud)
+library(scales)
+library(widyr)
+library(ggrepel)
+```
+
+You can add options to executable code like this
+
+```{r}
+trait_levels <- c("Cunning & Strategy", "Renown & Pride", "Home & Family Loyalty", "Endurance & Suffering", "Command & Combat")
+
+trait_colors <- c("Cunning & Strategy" = "#1b9e77", "Renown & Pride" = "#d95f02", "Home & Family Loyalty" = "#7570b3", "Endurance & Suffering" = "#e7298a", "Command & Combat" = "#66a61e")
+
+# ---- Shared lexicon: union of the words found in any translation ----------
+trait_words_shared <- list(
+  "Cunning & Strategy" = c("plan", "ways", "tactician", "cunning", "plans", "craft", "wise", "mastermind", "wily", "watchful", "wits", "clever", "strategist", "careful", "carefully", "tactics", "tact", "scheming", "cautious", "plotting", "plotted", "guile", "crafty", "resourceful", "plots", "disguised", "cautiously"),
+  "Renown & Pride" = c("great", "noble", "famous", "godlike", "exploits", "glory", "hero", "splendid", "majesty", "honorable", "honored", "admiration", "famed", "honor", "well-known"),
+  "Home & Family Loyalty" = c("home", "wife", "tears", "husband", "return", "native", "hearth", "returned", "weeping", "wept", "beloved", "loyal", "country", "family", "longing", "homeland"),
+  "Endurance & Suffering" = c("long-enduring", "pain", "grief", "endured", "exile", "long-suffering", "suffered", "worn", "misery", "patient", "bitter", "trials", "strong-willed", "labored", "pains", "grieve", "wandering", "sorrow", "woe", "suffering", "suffer", "troubles"),
+  "Command & Combat" = c("king", "lord", "master", "royal", "soldier", "raider", "strong", "mariner", "kingly", "realm", "veteran", "seasoned", "mighty", "city-sacker", "campaigner", "brave", "bloody", "raged", "fury", "commanders", "angrily", "violence", "fighter", "fearless", "warlike", "furious")
+)
+```
+
+The `echo: false` option disables the printing of code (only output is displayed).
